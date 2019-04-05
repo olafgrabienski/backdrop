@@ -530,8 +530,8 @@ function hook_node_load($nodes, $types) {
  *
  * Note that not all modules will want to influence access on all node types. If
  * your module does not want to actively grant or block access, return
- * NODE_ACCESS_IGNORE or simply return nothing. Blindly returning FALSE will
- * break other node access modules.
+ * NODE_ACCESS_IGNORE or return nothing. Blindly returning FALSE will break
+ * other node access modules.
  *
  * Also note that this function isn't called for node listings (e.g., RSS feeds,
  * the default home page at path 'node', a recent content block, etc.) See
@@ -731,8 +731,8 @@ function hook_node_validate(Node $node, $form, &$form_state) {
  * This hook is invoked when a node form is submitted with the "Save" button,
  * after form values have been copied to the form state's node object, but
  * before the node is saved. It is a chance for modules to adjust the node's
- * properties from what they are simply after a copy from $form_state['values'].
- * This hook is intended for adjusting non-field-related properties. See
+ * properties from what they are after a copy from $form_state['values']. This
+ * hook is intended for adjusting non-field-related properties. See
  * hook_field_attach_submit() for customizing field-related properties.
  *
  * @param Node $node
@@ -902,7 +902,7 @@ function hook_ranking() {
 function hook_node_type_load(&$types) {
   foreach ($types as $type_name => $type) {
     $types[$type_name]->settings += array(
-      'status_default' => TRUE,
+      'status_default' => NODE_PUBLISHED,
       'promote_default' => FALSE,
       'sticky_default' => FALSE,
       'revision_default' => FALSE,
@@ -1222,7 +1222,7 @@ function hook_validate(Node $node, $form, &$form_state) {
  * @param Node $node
  *   The node to be displayed, as returned by node_load().
  * @param $view_mode
- *   View mode, e.g. 'full', 'teaser', ...
+ *   Display mode, e.g. 'full', 'teaser', ...
  *
  * @return
  *   The passed $node parameter should be modified as necessary and returned so

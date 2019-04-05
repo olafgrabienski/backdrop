@@ -58,7 +58,7 @@
  *   - COMMENT_MODE_THREADED
  *
  * Node status variables:
- * - $view_mode: View mode; for example, "full", "teaser".
+ * - $view_mode: Display mode, e.g. 'full', or 'teaser'.
  * - $teaser: Flag for the teaser state (shortcut for $view_mode == 'teaser').
  * - $page: Flag for the full page state.
  * - $promote: Flag for front page promotion state.
@@ -109,8 +109,8 @@
 
   <?php print render($content['links']); ?>
 
-  <?php if ($page && isset($comments['comments'])): ?>
-    <section class="comments">  
+  <?php if ($comments): ?>
+    <section class="comments" id="comments">
       <?php if ($comments['comments']): ?>
         <h2 class="title"><?php print t('Comments'); ?></h2>
         <?php print render($comments['comments']); ?>

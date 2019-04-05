@@ -79,6 +79,7 @@ function menu_menu() {
     'page arguments' => array('menu_edit_item', 'add', NULL, 4),
     'access arguments' => array('administer menu'),
     'type' => MENU_LOCAL_ACTION,
+    'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
     'file' => 'menu.admin.inc',
   );
   $items['admin/structure/menu/manage/%menu/configure'] = array(
@@ -87,7 +88,7 @@ function menu_menu() {
     'page arguments' => array('menu_edit_menu', 'configure', 4),
     'access arguments' => array('administer menu'),
     'type' => MENU_LOCAL_TASK,
-    'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+    'context' => MENU_CONTEXT_PAGE,
     'file' => 'menu.admin.inc',
   );
   $items['admin/structure/menu/manage/%menu/delete'] = array(
@@ -307,7 +308,7 @@ function menu_delete($menu) {
   menu_delete_links($menu['menu_name']);
 
   // Remove menu from active menus variable.
-  $active_menus = $config->get('active_menus_default') ?: array_keys(menu_get_menus());  
+  $active_menus = $config->get('active_menus_default') ?: array_keys(menu_get_menus());
   foreach ($active_menus as $i => $menu_name) {
     if ($menu['menu_name'] == $menu_name) {
       unset($active_menus[$i]);
@@ -503,6 +504,23 @@ function menu_block_view_alter(&$data, $block) {
 }
 
 /**
+ * Implements hook_menu_local_tasks_alter().
+ */
+function menu_menu_local_tasks_alter(&$data, $router_item, $root_path) {
+  // Add language code to the "Add link" action link under
+  // admin/structure/menu/manage/[menu-name].
+  if ($root_path == 'admin/structure/menu/manage/%') {
+    foreach ($data['actions']['output'] as $key => $action_link) {
+      if ($action_link['#link']['path'] === 'admin/structure/menu/manage/%/add') {
+        $default_langcode = isset($_GET['langcode']) ? $_GET['langcode'] : LANGUAGE_NONE;
+        $query['langcode'] = $default_langcode;
+        $data['actions']['output'][$key]['#link']['localized_options'] = array('query' => $query);
+      }
+    }
+  }
+}
+
+/**
  * Implements hook_node_insert().
  */
 function menu_node_insert(Node $node) {
@@ -530,6 +548,7 @@ function menu_node_save(Node $node) {
     elseif (trim($link['link_title'])) {
       $link['link_title'] = trim($link['link_title']);
       $link['link_path'] = "node/$node->nid";
+      $link['langcode'] = $node->langcode;
       if (trim($link['description'])) {
         $link['options']['attributes']['title'] = trim($link['description']);
       }
@@ -675,6 +694,7 @@ function menu_form_node_form_alter(&$form, $form_state) {
   $form['menu']['link']['link_title'] = array(
     '#type' => 'textfield',
     '#title' => t('Menu link title'),
+    '#maxlength' => 255,
     '#default_value' => $link['link_title'],
   );
 
@@ -741,7 +761,7 @@ function menu_form_node_type_form_alter(&$form, $form_state) {
       'js' => array(backdrop_get_path('module', 'menu') . '/js/menu.admin.js'),
     ),
     '#group' => 'additional_settings',
-    '#weight' => 8,
+    '#weight' => 15,
   );
   $form['menu']['menu_options'] = array(
     '#type' => 'checkboxes',

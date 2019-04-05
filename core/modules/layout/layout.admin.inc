@@ -91,7 +91,7 @@ function layout_list_page() {
     '#theme' => 'table',
     '#header' => $header,
     '#rows' => $rows,
-    '#attributes' => array('id' => 'layout-list'),
+    '#attributes' => array('class' =>   array('layout-list')),
     '#empty' => t('No layouts have been created yet.'),
   );
   return $page;
@@ -122,6 +122,16 @@ function _layout_get_operations(Layout $layout) {
       'title' => t('Clone Layout'),
       'href' => 'admin/structure/layouts/manage/' . $layout->name . '/clone',
     );
+    if (user_access('synchronize configuration')) {
+      $links['export'] = array(
+        'title' => t('Export Layout'),
+        'href' => 'admin/config/development/configuration/single/export',
+        'query' => array(
+          'group' => 'Layouts',
+          'name' => 'layout.layout.' . $layout->name,
+        ),
+      );
+    }
     if (!$layout->disabled) {
       $links['disable'] = array(
         'title' => t('Disable Layout'),
@@ -250,10 +260,10 @@ function layout_settings_form($form, &$form_state, Layout $layout) {
     '#required' => TRUE,
   );
 
-  // Get the list of layout template options.
-  $all_template_info = layout_get_layout_template_info();
+  // Get the list of layout template options. The list needs to be rebuilt (see
+  // https://github.com/backdrop/backdrop-issues/issues/984)
+  $all_template_info = layout_get_layout_template_info(NULL, TRUE);
   $excluded = config_get('layout.settings', 'excluded_templates');
-  //dpm($excluded);
   foreach ($all_template_info as $template_name => $template_info) {
     if (!in_array($template_name, $excluded)) {
       $form['layout_template']['#options'][$template_name] = theme('layout_template_option', array('template_info' => $template_info));
@@ -362,7 +372,23 @@ function layout_settings_form($form, &$form_state, Layout $layout) {
     '#id' => 'layout-access',
     '#access' => !$layout->isDefault(),
   );
+  $form['conditions']['add'] = array(
+    '#type' => 'submit',
+    '#value' => t('Add visibility condition'),
+    '#attributes' => array('class' => array('layout-link-button', 'layout-access-add')),
+    '#validate' => array(),
+    '#submit' => array(
+      'layout_settings_form_update_layout',
+      'layout_settings_form_condition_add',
+    ),
+    '#ajax' => array(
+      'callback' => 'layout_ajax_form_open_dialog',
+    ),
+    '#prefix' => '<ul class="action-links"><li>',
+    '#suffix' => '</li></ul>',
+  );
   $form['conditions']['active'] = array(
+    '#type' => 'container',
     '#theme' => 'layout_conditions',
     '#attributes' => array('class' => array('layout-access-list')),
   );
@@ -405,21 +431,6 @@ function layout_settings_form($form, &$form_state, Layout $layout) {
       '#name' => 'conditions_' . $access_key . '_configure',
     );
   }
-  $form['conditions']['add'] = array(
-    '#type' => 'submit',
-    '#value' => t('Add visibility condition'),
-    '#attributes' => array('class' => array('layout-link-button', 'layout-access-add')),
-    '#validate' => array(),
-    '#submit' => array(
-      'layout_settings_form_update_layout',
-      'layout_settings_form_condition_add',
-    ),
-    '#ajax' => array(
-      'callback' => 'layout_ajax_form_open_dialog',
-    ),
-    '#prefix' => '<ul class="action-links"><li>',
-    '#suffix' => '</li></ul>',
-  );
 
   $form['actions'] = array('#type' => 'actions');
   $form['actions']['submit'] = array(
@@ -468,7 +479,7 @@ function layout_settings_form_validate(&$form, &$form_state) {
     if ($alias) {
       $error = t('That path is currently assigned to be an alias for "@alias".', array('@alias' => $alias->source));
       if (user_access('administer url aliases')) {
-        $error .= ' ' . t('<a href="!url">Delete the alias first</a>, then save this layout.', array('!url' => url('admin/config/search/path/delete/' . $alias->pid, array('query' => array('destination' => $_GET['q'])))));
+        $error .= ' ' . t('<a href="!url">Delete the alias first</a>, then save this layout.', array('!url' => url('admin/config/urls/path/delete/' . $alias->pid, array('query' => array('destination' => $_GET['q'])))));
       }
       form_error($form['path'], $error);
     }
@@ -970,7 +981,7 @@ function layout_block_add_page(Layout $layout, $renderer_name, $region_name, $bl
 
   $output['search'] = array(
     '#type' => 'textfield',
-    '#title' => 'Search',
+    '#title' => t('Search'),
     '#attributes' => array(
       'id' => array('layout-block-list-search'),
     ),
@@ -1060,7 +1071,7 @@ function layout_title_settings_form($form, &$form_state, Layout $layout) {
   $block_options = array();
   foreach ($layout->content as $uuid => $block) {
     $title = $all_blocks[$block->module][$block->delta]['info'];
-    if (!empty($title) && $title !== 'Add a custom block') {
+    if (!empty($title) && $title !== 'Custom block' && !is_a($block, 'PageComponents')) {
       $block_options[$uuid] = $title;
     }
   }
@@ -1181,7 +1192,7 @@ function layout_block_configure_form($form, &$form_state, Layout $layout, Block 
   $form['actions']['#type'] = 'actions';
   $form['actions']['submit'] = array(
     '#type' => 'submit',
-    '#value' => empty($block->uuid) ? t('Add block') : t('Save block'),
+    '#value' => empty($block->uuid) ? t('Add block') : t('Update block'),
   );
 
   $form['#tree'] = TRUE;
@@ -1467,6 +1478,12 @@ function layout_block_configure_ajax_update($form, $form_state) {
     $commands[] = ajax_command_replace('#layout-editor-block-' . $block->uuid, $renderer->renderBlock($block));
   }
 
+  // Remove the page title pseudo region if we're adding a Title block or a
+  // Combo block.
+  if ($block->module == 'system' && $block->delta == 'page_components' && ($block->childDelta == 'title' || $block->childDelta =='title_combo')) {
+    $commands[] = ajax_command_replace('#layout-editor-title', '<div id="layout-title-region-empty"></div>');
+  }
+
   // Update the messages area.
   if ($message = layout_locked_message($layout, 'layout')) {
     backdrop_set_message($message, 'warning');
@@ -1488,11 +1505,28 @@ function layout_block_remove_page(Layout $layout, Block $block, $renderer_name) 
     return MENU_ACCESS_DENIED;
   }
 
+  $commands = array();
   $layout->removeBlock($block->uuid);
   layout_set_layout_tempstore($layout);
 
   if (backdrop_is_ajax()) {
     $commands[] = ajax_command_remove('#layout-editor-block-' . $block->uuid);
+    // If neither a Title block nor a Combo block remains in the layout, add
+    // the page title pseudo-region.
+    if ($block->module == 'system' && $block->delta == 'page_components' && ($block->childDelta == 'title' || $block->childDelta =='title_combo')) {
+      $render_title_region = TRUE;
+      $all_layout_blocks = $layout->content;
+      foreach ($all_layout_blocks as $existing_block) {
+        if ($existing_block->module == 'system' && $existing_block->delta == 'page_components' && ($existing_block->childDelta == 'title' || $existing_block->childDelta =='title_combo') && ($existing_block->uuid != $block->uuid)) {
+          $render_title_region = FALSE;
+          break;
+        }
+      }
+      if ($render_title_region) {
+        $renderer = layout_create_renderer($renderer_name, $layout);
+        $commands[] = ajax_command_replace('#layout-title-region-empty', $renderer->renderTitleRegion('title'));
+      }
+    }
     return array(
       '#type' => 'ajax',
       '#commands' => $commands,
@@ -1580,7 +1614,8 @@ function layout_condition_add_form($form, &$form_state, Layout $layout = NULL, B
     $handler = isset($layout->conditions[$condition_id]) ? $layout->conditions[$condition_id] : NULL;
   }
   $form['help'] = array(
-    '#markup' => '<p>' . $help . '</p>',
+    '#type' => 'help',
+    '#markup' => $help,
   );
   $all_access_info = _layout_get_all_info('layout_access');
   backdrop_sort($all_access_info, array('title'));
@@ -1899,7 +1934,8 @@ function layout_reorder_form($form, &$form_state) {
   }
 
   $form['help'] = array(
-    '#markup' => '<p class="help">' . t('Layouts at the same path are selected based on the first layout that matches its conditions. Reorder the layouts on this page to affect the layout that will be used first.') . '</p>',
+    '#type' => 'help',
+    '#markup' => t('Layouts at the same path are selected based on the first layout that matches its conditions. Reorder the layouts on this page to affect the layout that will be used first.'),
   );
 
   $form['layouts'] = array(
@@ -2622,12 +2658,13 @@ function layout_settings_page($form, &$form_state) {
   $form['#attached']['css'][] = backdrop_get_path('module', 'layout') . '/css/layout.admin.css';
   $form['#attributes']['class'] = array('layout-settings-page');
 
-  // Get the list of layout template options.
-  $all_layout_info = layout_get_layout_template_info();
+  // Get the list of layout template options. The list needs to be rebuilt (see
+  // https://github.com/backdrop/backdrop-issues/issues/984)
+  $all_template_info = layout_get_layout_template_info(NULL, TRUE);
   $options = array();
   $default = array();
   $form_state['hidden_templates'] = array();
-  foreach ($all_layout_info as $template_name => $template_info) {
+  foreach ($all_template_info as $template_name => $template_info) {
     // Build the default values list.
     if (!in_array($template_name, $excluded)) {
       $default[] = $template_name;

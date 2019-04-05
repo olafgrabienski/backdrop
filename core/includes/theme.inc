@@ -161,7 +161,7 @@ function _backdrop_theme_initialize($theme, $base_themes = array(), $registry_ca
 
   // Prepare stylesheets from this theme as well as all ancestor themes.
   // We work it this way so that we can have child themes override parent
-  // theme stylesheets easily.
+  // theme stylesheets.
   $final_stylesheets = array();
 
   // Grab stylesheets from base theme
@@ -1290,7 +1290,7 @@ function backdrop_find_theme_functions($cache, $prefixes) {
 }
 
 /**
- * Allows themes and/or theme engines to easily discover overridden templates.
+ * Allows themes and/or theme engines to discover overridden templates.
  *
  * @param $cache
  *   The existing cache of theme hooks to test against.
@@ -1730,22 +1730,23 @@ function theme_status_messages($variables) {
     'status' => t('Status message'),
     'error' => t('Error message'),
     'warning' => t('Warning message'),
+    'info' => t('Info message'),
   );
 
   foreach ($message_types as $type => $messages) {
     $output .= "<div class=\"messages $type\">\n";
     if (!empty($status_heading[$type])) {
-      $output .= '<h2 class="element-invisible">' . $status_heading[$type] . "</h2>\n";
+      $output .= '  <h2 class="element-invisible">' . $status_heading[$type] . "</h2>\n";
     }
     if (count($messages) > 1) {
-      $output .= " <ul>\n";
+      $output .= "  <ul>\n";
       foreach ($messages as $message) {
-        $output .= '  <li>' . $message . "</li>\n";
+        $output .= '    <li>' . $message . "</li>\n";
       }
-      $output .= " </ul>\n";
+      $output .= "  </ul>\n";
     }
     else {
-      $output .= reset($messages);
+      $output .= reset($messages) . "\n";
     }
     $output .= "</div>\n";
   }
@@ -1830,8 +1831,8 @@ function theme_link($variables) {
 function theme_links($variables) {
   global $language_url;
 
-  $links = $variables['links'];
-  $attributes = $variables['attributes'];
+  $links = (array) $variables['links'];
+  $attributes = (array) $variables['attributes'];
   $heading = $variables['heading'];
   $output = '';
 
@@ -1927,12 +1928,35 @@ function theme_dropbutton_wrapper($variables) {
 }
 
 /**
+ * Preprocess variables for theme_image().
+ *
+ * @since 1.8.0 Function added. Populates $variables['attributes'] before
+ *   theme_image() is called.
+ */
+function template_preprocess_image(&$variables) {
+  // Accept either URI or path key. But both are handled by file_create_url().
+  $path_or_uri = $variables['uri'] ? $variables['uri'] : $variables['path'];
+  $variables['attributes']['src'] = file_create_url($path_or_uri);
+
+  // Convert all other variables into the attributes array.
+  foreach (array('width', 'height', 'alt', 'title') as $key) {
+    if (isset($variables[$key])) {
+      $variables['attributes'][$key] = $variables[$key];
+    }
+  }
+}
+
+/**
  * Returns HTML for an image.
+ *
+ * Either a "uri" or "path" should be provided to the image. URIs should be used
+ * for files that are stored in the public or private file directories. Paths
+ * should be used for images relative to the Backdrop installation.
  *
  * @param $variables
  *   An associative array containing:
- *   - uri: Either the path of the image file (relative to base_path()) or a
- *     full URL.
+ *   - uri: A file URI, prefixed with a file scheme such as public://
+ *   - path: A file path relative to the root of the Backdrop installation.
  *   - width: The width of the image (if known).
  *   - height: The height of the image (if known).
  *   - alt: The alternative text for text-based browsers. HTML 4 and XHTML 1.0
@@ -1948,18 +1972,14 @@ function theme_dropbutton_wrapper($variables) {
  *   - title: The title text is displayed when the image is hovered in some
  *     popular browsers.
  *   - attributes: Associative array of attributes to be placed in the img tag.
+ *     All attributes should be populated with the correct values that match
+ *     the other input variables.
+ *
+ * @since 1.8.0 Added support for $variables['path']. All variables are now
+ *   populated into $variables['attributes'] in template_preprocess_image().
  */
 function theme_image($variables) {
-  $attributes = $variables['attributes'];
-  $attributes['src'] = file_create_url($variables['uri']);
-
-  foreach (array('width', 'height', 'alt', 'title') as $key) {
-    if (isset($variables[$key])) {
-      $attributes[$key] = $variables[$key];
-    }
-  }
-
-  return '<img' . backdrop_attributes($attributes) . ' />';
+  return '<img' . backdrop_attributes($variables['attributes']) . ' />';
 }
 
 /**
@@ -1994,7 +2014,7 @@ function theme_breadcrumb($variables) {
  *     - "data": The localized title of the table column.
  *     - "field": The database field represented in the table column (required
  *       if user is to be able to sort on this column).
- *     - "sort": A default sort order for this column ("asc" or "desc"). 
+ *     - "sort": A default sort order for this column ("asc" or "desc").
  *     - "class": An array of values for the 'class' attribute. In particular,
  *       the least important columns that can be hidden on narrow and medium
  *       width screens should have a 'priority-low' class, referenced with the
@@ -2062,15 +2082,15 @@ function theme_breadcrumb($variables) {
  *     );
  *     @endcode
  *     These optional tags are used to group and set properties on columns
- *     within a table. For example, one may easily group three columns and
- *     apply same background style to all.
+ *     within a table. For example, one may group three columns and apply the
+ *     same background style to all.
  *   - sticky: Use a "sticky" table header.
  *   - empty: The message to display in an extra row if table does not have any
  *     rows.
  */
 function theme_table($variables) {
-  $header = $variables['header'];
-  $rows = $variables['rows'];
+  $header = (array) $variables['header'];
+  $rows = (array) $variables['rows'];
   $attributes = $variables['attributes'];
   $caption = $variables['caption'];
   $colgroups = $variables['colgroups'];
@@ -2085,7 +2105,7 @@ function theme_table($variables) {
   }
 
   // Format the table columns:
-  if (count($colgroups)) {
+  if (!empty($colgroups)) {
     foreach ($colgroups as $colgroup) {
       $colgroup_attributes = array();
 
@@ -2119,14 +2139,16 @@ function theme_table($variables) {
   }
 
   // Add the 'empty' row message if available.
-  if (!count($rows) && $empty) {
+  if (empty($rows) && $empty) {
     $header_count = 0;
-    foreach ($header as $header_cell) {
-      if (is_array($header_cell)) {
-        $header_count += isset($header_cell['colspan']) ? $header_cell['colspan'] : 1;
-      }
-      else {
-        $header_count++;
+    if (!empty($header)) {
+      foreach ($header as $header_cell) {
+        if (is_array($header_cell)) {
+          $header_count += isset($header_cell['colspan']) ? $header_cell['colspan'] : 1;
+        }
+        else {
+          $header_count++;
+        }
       }
     }
     $rows[] = array(array('data' => $empty, 'colspan' => $header_count, 'class' => array('empty', 'message')));
@@ -2134,11 +2156,11 @@ function theme_table($variables) {
 
   $responsive_columns = array();
   // Format the table header:
-  if (count($header)) {
+  if (!empty($header)) {
     $ts = tablesort_init($header);
     // HTML requires that the thead tag has tr tags in it followed by tbody
     // tags. Using ternary operator to check and see if we have any rows.
-    $output .= (count($rows) ? ' <thead><tr>' : ' <tr>');
+    $output .= (!empty($rows) ? ' <thead><tr>' : ' <tr>');
     $i = 0;
     foreach ($header as $cell) {
       $i++;
@@ -2158,14 +2180,14 @@ function theme_table($variables) {
       $output .= _theme_table_cell($cell, TRUE);
     }
     // Close the tags based on whether or not there are rows.
-    $output .= (count($rows) ? " </tr></thead>\n" : "</tr>\n");
+    $output .= (!empty($rows) ? " </tr></thead>\n" : "</tr>\n");
   }
   else {
     $ts = array();
   }
 
   // Format the table rows:
-  if (count($rows)) {
+  if (!empty($rows)) {
     $output .= "<tbody>\n";
     $flip = array('even' => 'odd', 'odd' => 'even');
     $class = 'even';
@@ -2185,7 +2207,7 @@ function theme_table($variables) {
         $tr_attributes = array();
         $no_striping = FALSE;
       }
-      if (count($cells)) {
+      if (!empty($cells)) {
         // Add odd/even class.
         if (!$no_striping) {
           $class = $flip[$class];
@@ -2218,7 +2240,7 @@ function theme_table($variables) {
   }
 
   // Add sticky headers if enabled.
-  if (count($header) && $sticky) {
+  if (!empty($header) && $sticky) {
     backdrop_add_js('core/misc/tableheader.js');
     // Add 'sticky-enabled' class to the table to identify it for JS.
     // This is needed to target tables constructed by this function.
@@ -2249,10 +2271,10 @@ function theme_table($variables) {
  */
 function theme_tablesort_indicator($variables) {
   if ($variables['style'] == "asc") {
-    return theme('image', array('uri' => 'core/misc/arrow-asc.png', 'width' => 13, 'height' => 13, 'alt' => t('sort ascending'), 'title' => t('sort ascending')));
+    return theme('image', array('path' => 'core/misc/arrow-asc.png', 'width' => 13, 'height' => 13, 'alt' => t('sort ascending'), 'title' => t('sort ascending')));
   }
   else {
-    return theme('image', array('uri' => 'core/misc/arrow-desc.png', 'width' => 13, 'height' => 13, 'alt' => t('sort descending'), 'title' => t('sort descending')));
+    return theme('image', array('path' => 'core/misc/arrow-desc.png', 'width' => 13, 'height' => 13, 'alt' => t('sort descending'), 'title' => t('sort descending')));
   }
 }
 
@@ -2367,6 +2389,17 @@ function theme_item_list($variables) {
 }
 
 /**
+ * Returns HTML for a help element.
+ */
+function theme_help($variables) {
+  // Wrap in a paragraph tag if one is not present.
+  if (strpos($variables['markup'], '<p') === FALSE) {
+    $variables['markup'] = '<p>' . $variables['markup'] . '</p>';
+  }
+  return '<div class="help">' . $variables['markup'] . '</div>';
+}
+
+/**
  * Returns HTML for a "more help" link.
  *
  * @param $variables
@@ -2388,7 +2421,7 @@ function theme_more_help_link($variables) {
  */
 function theme_feed_icon($variables) {
   $text = t('Subscribe to !feed-title', array('!feed-title' => $variables['title']));
-  if ($image = theme('image', array('uri' => 'core/misc/feed.png', 'width' => 16, 'height' => 16, 'alt' => $text))) {
+  if ($image = theme('image', array('path' => 'core/misc/feed.png', 'width' => 16, 'height' => 16, 'alt' => $text))) {
     return l($image, $variables['url'], array('html' => TRUE, 'attributes' => array('class' => array('feed-icon'), 'title' => $text)));
   }
 }
@@ -2655,7 +2688,7 @@ function template_preprocess_page(&$variables) {
   backdrop_add_html_head_link(array('rel' => 'shortcut icon', 'href' => $favicon['path'], 'type' => $favicon['type']));
 
   $site_config = config('system.core');
-  // Construct page title.
+  // Construct head <title>.
   if (backdrop_get_title()) {
     $head_title = array(
       'title' => strip_tags(backdrop_get_title()),
@@ -2771,18 +2804,14 @@ function template_preprocess_maintenance_page(&$variables) {
   $favicon = backdrop_get_favicon();
   backdrop_add_html_head_link(array('rel' => 'shortcut icon', 'href' => $favicon['path'], 'type' => $favicon['type']));
 
-  // Construct page title
+  // Construct head <title>.
+  $head_title = array();
   if (backdrop_get_title()) {
-    $head_title = array(
-      'title' => strip_tags(backdrop_get_title()),
-      'name' => $site_name,
-    );
+    $head_title['title'] = strip_tags(backdrop_get_title());
   }
-  else {
-    $head_title = array('name' => $site_name);
-    if ($site_slogan) {
-      $head_title['slogan'] = $site_slogan;
-    }
+  $head_title['name'] = $site_name ? $site_name : 'Backdrop CMS';
+  if ($site_slogan) {
+    $head_title['slogan'] = $site_slogan;
   }
 
   // Set the default language if necessary.
@@ -2799,7 +2828,6 @@ function template_preprocess_maintenance_page(&$variables) {
   $variables['front_page']        = url();
   $variables['breadcrumb']        = '';
   $variables['feed_icons']        = '';
-  $variables['help']              = '';
   $variables['messages']          = $variables['show_messages'] ? theme('status_messages') : '';
   $variables['main_menu']         = array();
   $variables['secondary_menu']    = array();

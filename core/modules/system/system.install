@@ -44,15 +44,23 @@ function system_requirements($phase) {
   $software = $_SERVER['SERVER_SOFTWARE'];
   $requirements['webserver'] = array(
     'title' => $t('Web server'),
-    'value' => $software,
+    'value' => check_plain($software),
+    'severity' => REQUIREMENT_INFO,
   );
 
   // Test PHP version and show link to phpinfo() if it's available
   $phpversion = phpversion();
   if (function_exists('phpinfo')) {
+    if ($phase == 'runtime') {
+      $php_value = $t('Version: !version (<a href="!infourl">PHP information</a>)', array('!version' => $phpversion, '!infourl' => url('admin/reports/status/php')));
+    }
+    else {
+      $php_value = $t('Version: !version', array('!version' => $phpversion));
+    }
     $requirements['php'] = array(
       'title' => $t('PHP'),
-      'value' => ($phase == 'runtime') ? $phpversion .' ('. l($t('more information'), 'admin/reports/status/php') .')' : $phpversion,
+      'value' =>  $php_value,
+      'severity' => REQUIREMENT_INFO,
     );
   }
   else {
@@ -128,7 +136,8 @@ function system_requirements($phase) {
     $requirements['php_extensions']['description'] = $description;
   }
   else {
-    $requirements['php_extensions']['value'] = $t('Enabled');
+    $description = $t('Enabled: !extensions', array('!extensions' => implode(', ', $required_extensions)));
+    $requirements['php_extensions']['value'] = $description;
   }
 
   if ($phase == 'install' || $phase == 'update') {
@@ -167,13 +176,11 @@ function system_requirements($phase) {
     $class = 'DatabaseTasks_' . Database::getConnection()->driver();
     /* @var DatabaseTasks $tasks */
     $tasks = new $class();
+    $dbinfo = $t('!system version !version', array('!system' => $tasks->name(), '!version' => Database::getConnection()->version()));
     $requirements['database_system'] = array(
-      'title' => $t('Database system'),
-      'value' => $tasks->name(),
-    );
-    $requirements['database_system_version'] = array(
-      'title' => $t('Database system version'),
-      'value' => Database::getConnection()->version(),
+      'title' => $t('MySQL Database'),
+      'severity' => REQUIREMENT_INFO,
+      'value' => $dbinfo,
     );
   }
 
@@ -181,6 +188,17 @@ function system_requirements($phase) {
   $charset_requirements = _system_check_db_utf8mb4_requirements($phase);
   if (!empty($charset_requirements)) {
     $requirements['database_charset'] = $charset_requirements;
+  }
+
+  // Report jQuery and jQuery UI versions.
+  if ($phase == 'runtime') {
+    $jquery = backdrop_get_library('system', 'jquery');
+    $jquery_ui = backdrop_get_library('system', 'ui');
+    $requirements['jquery'] = array(
+      'title' => $t('jQuery'),
+      'severity' => REQUIREMENT_OK,
+      'value' => $t('jQuery version !jqv / jQuery UI version !jquiv', array('!jqv' => $jquery['version'], '!jquiv' => $jquery_ui['version'])),
+    );
   }
 
   // Test PHP memory_limit
@@ -216,7 +234,7 @@ function system_requirements($phase) {
   }
 
   // Test the contents of the .htaccess files.
-  if ($phase == 'runtime') {
+  if ($phase == 'runtime' && backdrop_is_apache()) {
     // Try to write the .htaccess files first, to prevent false alarms in case
     // (for example) the /tmp directory was wiped.
     file_ensure_htaccess();
@@ -274,20 +292,22 @@ function system_requirements($phase) {
     }
 
     // Set summary and description based on values determined above.
-    $summary = $t('Last run !time ago', array('!time' => format_interval(REQUEST_TIME - $cron_last)));
+    $summary = $t('Last run !time ago (<a href="@url">Run cron manually</a>)', array(
+      '!time' => format_interval(REQUEST_TIME - $cron_last),
+      '@url' => url('admin/reports/status/run-cron')
+    ));
     $description = '';
     if ($severity != REQUIREMENT_OK) {
       $description = $t('Cron has not run recently.') . ' ' . $help;
     }
 
-    $description .= ' ' . $t('You can <a href="@cron">run cron manually</a>.', array('@cron' => url('admin/reports/status/run-cron')));
-    $description .= '<br />' . $t('To run cron from outside the site, go to <a href="!cron">!cron</a>', array('!cron' => url($base_url . '/core/cron.php', array('external' => TRUE, 'query' => array('cron_key' => state_get('cron_key'))))));
+    $description .= $t('To run cron from outside the site, go to <a href="!cron">!cron</a>', array('!cron' => url($base_url . '/core/cron.php', array('external' => TRUE, 'query' => array('cron_key' => state_get('cron_key'))))));
 
     $requirements['cron'] = array(
       'title' => $t('Cron maintenance tasks'),
       'severity' => $severity,
       'value' => $summary,
-      'description' => $description
+      'description' => $description,
     );
   }
 
@@ -299,7 +319,7 @@ function system_requirements($phase) {
     $directories[] = file_directory_temp();
   }
   else {
-    $directories[] = 'files';
+    $directories[] = conf_path() . '/files';
   }
 
   $requirements['file system'] = array(
@@ -370,7 +390,7 @@ function system_requirements($phase) {
         $latest_schema = end($updates);
         if ($current_schema < $latest_schema) {
           $requirements['update']['severity'] = REQUIREMENT_ERROR;
-          $requirements['update']['value'] = $t('Out of date');
+          $requirements['update']['value'] = $t('Out of date') . ' (' . l(t('Run database updates'), base_path() . 'core/update.php'). ')';
           $requirements['update']['description'] = $t('Some modules have database schema updates to install. You should run the <a href="@update">database update script</a> immediately.', array('@update' => base_path() . 'core/update.php'));
           break;
         }
@@ -427,7 +447,7 @@ function system_requirements($phase) {
         // Check for an incompatible version.
         $required_file = $files[$required_module];
         $required_name = $required_file->info['name'];
-        $version = str_replace(BACKDROP_CORE_COMPATIBILITY . '-', '', $required_file->info['version']);
+        $version = preg_replace('/^' . preg_quote(BACKDROP_CORE_COMPATIBILITY, '/') . '-/', '', $required_file->info['version']);
         $compatibility = backdrop_check_incompatibility($requirement, $version);
         if ($compatibility) {
           $compatibility = rtrim(substr($compatibility, 2), ')');
@@ -461,7 +481,7 @@ function system_requirements($phase) {
         'value' => $t('Enabled'),
       );
     }
-    $requirements['update status']['title'] = $t('Update notifications');
+    $requirements['update status']['title'] = $t('Backdrop CMS update notifications');
   }
 
   if ($phase == 'runtime') {
@@ -544,21 +564,21 @@ function system_requirements($phase) {
       );
     }
   }
-  
+
   if ($phase == 'runtime') {
     // Inform user about status of display error messages.
     $error_level = config_get('system.core', 'error_level');
-    $description_start = $t('Backdrop CMS provides the ability to display error messages, which can be useful while a site is in development.');
-    $logging_url = base_path() . 'admin/config/development/logging';
+    $description = $t('Backdrop CMS provides the ability to display error messages, which can be useful while a site is in development.');
+    $logging_url = url('admin/config/development/logging');
     if ($error_level != ERROR_REPORTING_HIDE) {
-      $value =  $t('Enabled');
-      $severity =  REQUIREMENT_WARNING;
-      $description = $description_start . ' ' . $t('Do not forget to <a href="@error_level">disable the display of errors</a> when you have finished testing and this site goes live.', array('@error_level' => $logging_url));
+      $value = $t('Enabled');
+      $severity = REQUIREMENT_WARNING;
+      $description .= ' ' . $t('Do not forget to <a href="@url">disable the display of errors</a> when you have finished testing and this site goes live.', array('@url' => $logging_url));
     }
     else {
-      $value =  $t('Disabled');
-      $severity =  REQUIREMENT_OK;
-      $description = $description_start . ' ' . $t('If your site is in development, you might want to <a href="@error_level">enable the display of errors</a>.', array('@error_level' => $logging_url));
+      $value = $t('Disabled');
+      $severity = REQUIREMENT_OK;
+      $description .= ' ' . $t('If your site is in development, you might want to <a href="@url">enable the display of errors</a>.', array('@url' => $logging_url));
     }
 
     $requirements['error_level'] = array(
@@ -567,6 +587,19 @@ function system_requirements($phase) {
       'severity' => $severity,
       'description' => $description,
     );
+  }
+
+  if ($phase == 'runtime') {
+    // Inform the user if theme_debug is enabled.
+    $theme_debug_enabled = config_get('system.core', 'theme_debug');
+    if ($theme_debug_enabled) {
+      $requirements['theme_debug'] = array(
+        'title' => $t('Theme debug'),
+        'value' => $t('Enabled'),
+        'severity' => REQUIREMENT_WARNING,
+        'description' => $t('Theme debugging is currently enabled, and should be disabled on a live site. This setting can be changed using the <a href="!url">Devel module</a>.', array('!url' => module_exists('devel') ? url('admin/config/development/devel') : 'https://backdropcms.org/project/devel')),
+      );
+    }
   }
 
   return $requirements;
@@ -593,18 +626,18 @@ function _system_check_db_utf8mb4_requirements($phase) {
 
   $connection = Database::getConnection();
   $t = get_t();
-  $requirements['title'] = $t('Database system 4 bit UTF-8 support');
+  $requirements['title'] = $t('MySQL Database 4-byte UTF-8 support');
 
   $utf8mb4_active = $connection->utf8mb4IsActive();
   $utf8mb4_supported = $connection->utf8mb4IsSupported();
   $documentation_url = 'https://api.backdropcms.org/database-configuration';
   $upgrade_path = 'admin/config/development/utf8mb4-upgrade';
 
-  $requirements['description'] = $t('4 bit UTF-8 support enables extended characters to be saved into the database, including emojis, Asian symbols and mathematical symbols.');
+  $requirements['description'] = $t('4-byte UTF-8 support enables extended characters to be saved into the database, including emojis, Asian symbols and mathematical symbols.');
 
   if ($utf8mb4_active) {
     if ($utf8mb4_supported) {
-      if ($phase != 'install' && !state_get('database_utf8mb4_active', FALSE)) {
+      if ($phase != 'install' && $phase != 'update' && !state_get('database_utf8mb4_active', FALSE)) {
         // Supported, active, and configurable, but not all database tables
         // have been converted yet.
         $requirements['value'] = l($t('Database tables need conversion'), $upgrade_path);
@@ -637,7 +670,7 @@ function _system_check_db_utf8mb4_requirements($phase) {
     else {
       // Not supported, not active.
       $requirements['value'] = $t('Not available');
-      $requirements['description'] .= ' ' . $t('This feature is not supported on your system. See the <a href="@url">documentation on adding 4 byte UTF-8 support</a> for more information.', array('@url' => $documentation_url));
+      $requirements['description'] .= ' ' . $t('This feature is not supported on your system. See the <a href="@url">documentation on adding 4-byte UTF-8 support</a> for more information.', array('@url' => $documentation_url));
       $requirements['severity'] = REQUIREMENT_INFO;
     }
   }
@@ -654,10 +687,16 @@ function system_install() {
   $version = $versions ? max($versions) : SCHEMA_INSTALLED;
   backdrop_set_installed_schema_version('system', $version);
 
+  // Set the public files path to the directory with the settings.php file.
+  config_set('system.core', 'file_public_path', str_replace('./', '', conf_path() . '/files'));
+
   // Clear out module list and hook implementation statics before calling
   // system_rebuild_theme_data().
   module_list(TRUE);
   module_implements_reset();
+
+  // Ensure the schema versions are not based on a previous module list.
+  backdrop_static_reset('drupal_get_schema_versions');
 
   // Load system theme data appropriately.
   system_rebuild_theme_data();
@@ -672,6 +711,14 @@ function system_install() {
   // Populate the cron key variable.
   $cron_key = backdrop_random_key();
   state_set('cron_key', $cron_key);
+
+  // Set the site_mail to a sensible default. Note that installs via the
+  // command line will not have a SERVER_NAME, and so the site mail must be
+  // specified manually via the install.sh script --site-mail option.
+  $site_mail = 'noreply@' . backdrop_get_bare_domain($_SERVER['SERVER_NAME']);
+  if (valid_email_address($site_mail)) {
+    config_set('system.core', 'site_mail', $site_mail);
+  }
 }
 
 /**
@@ -785,129 +832,6 @@ function system_schema() {
   $schema['cache_path']['description'] = 'Cache table for path alias lookup.';
   $schema['cache_token'] = $schema['cache'];
   $schema['cache_token']['description'] = 'Cache table for token information.';
-
-  $schema['file_managed'] = array(
-    'description' => 'Stores information for uploaded files.',
-    'fields' => array(
-      'fid' => array(
-        'description' => 'File ID.',
-        'type' => 'serial',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-      ),
-      'uid' => array(
-        'description' => 'The {users}.uid of the user who is associated with the file.',
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-        'default' => 0,
-      ),
-      'filename' => array(
-        'description' => 'Name of the file with no path components. This may differ from the basename of the URI if the file is renamed to avoid overwriting an existing file.',
-        'type' => 'varchar',
-        'length' => 255,
-        'not null' => TRUE,
-        'default' => '',
-      ),
-      'uri' => array(
-        'description' => 'The URI to access the file (either local or remote).',
-        'type' => 'varchar',
-        'length' => 255,
-        'not null' => TRUE,
-        'default' => '',
-      ),
-      'filemime' => array(
-        'description' => "The file's MIME type.",
-        'type' => 'varchar',
-        'length' => 255,
-        'not null' => TRUE,
-        'default' => '',
-      ),
-      'filesize' => array(
-        'description' => 'The size of the file in bytes.',
-        'type' => 'int',
-        'size' => 'big',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-        'default' => 0,
-      ),
-      'status' => array(
-        'description' => 'A field indicating the status of the file. Two status are defined in core: temporary (0) and permanent (1). Temporary files older than BACKDROP_MAXIMUM_TEMP_FILE_AGE will be removed during a cron run.',
-        'type' => 'int',
-        'not null' => TRUE,
-        'default' => 0,
-        'size' => 'tiny',
-      ),
-      'timestamp' => array(
-        'description' => 'UNIX timestamp for when the file was added.',
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-        'default' => 0,
-      ),
-    ),
-    'indexes' => array(
-      'uid' => array('uid'),
-      'status' => array('status'),
-      'timestamp' => array('timestamp'),
-    ),
-    'unique keys' => array(
-      'uri' => array('uri'),
-    ),
-    'primary key' => array('fid'),
-    'foreign keys' => array(
-      'file_owner' => array(
-        'table' => 'users',
-        'columns' => array('uid' => 'uid'),
-      ),
-    ),
-  );
-
-  $schema['file_usage'] = array(
-    'description' => 'Track where a file is used.',
-    'fields' => array(
-      'fid' => array(
-        'description' => 'File ID.',
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-      ),
-      'module' => array(
-        'description' => 'The name of the module that is using the file.',
-        'type' => 'varchar',
-        'length' => 255,
-        'not null' => TRUE,
-        'default' => '',
-      ),
-      'type' => array(
-        'description' => 'The name of the object type in which the file is used.',
-        'type' => 'varchar',
-        'length' => 64,
-        'not null' => TRUE,
-        'default' => '',
-      ),
-      'id' => array(
-        'description' => 'The primary key of the object using the file.',
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-        'default' => 0,
-      ),
-      'count' => array(
-        'description' => 'The number of times this file is used by this object.',
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-        'default' => 0,
-      ),
-    ),
-    'primary key' => array('fid', 'type', 'id', 'module'),
-    'indexes' => array(
-      'type_id' => array('type', 'id'),
-      'fid_count' => array('fid', 'count'),
-      'fid_module' => array('fid', 'module'),
-    ),
-  );
 
   $schema['flood'] = array(
     'description' => 'Flood controls the threshold of events, such as the number of contact attempts.',
@@ -1152,6 +1076,13 @@ function system_schema() {
         'not null' => TRUE,
         'default' => '',
         'translatable' => TRUE,
+      ),
+      'langcode' => array(
+        'description' => 'The language code for this menu link; if \'und\', the link will be shown in all languages.',
+        'type' => 'varchar',
+        'length' => 12,
+        'not null' => TRUE,
+        'default' => '',
       ),
       'options' => array(
         'description' => 'A serialized array of options to be passed to the url() or l() function, such as a query string or HTML attributes.',
@@ -2920,7 +2851,17 @@ function system_update_1056() {
  */
 function system_update_1057() {
   $config = config('system.core');
-  $config->set('watchdog_enabled_severity_levels', array(0, 1, 2, 3, 4, 5, 6));
+  $config->set('watchdog_enabled_severity_levels', array(
+    WATCHDOG_EMERGENCY,
+    WATCHDOG_ALERT,
+    WATCHDOG_CRITICAL,
+    WATCHDOG_ERROR,
+    WATCHDOG_WARNING,
+    WATCHDOG_NOTICE,
+    WATCHDOG_INFO,
+    // WATCHDOG_DEBUG,
+    // WATCHDOG_DEPRECATED,
+  ));
   $config->save();
 }
 
@@ -2951,6 +2892,150 @@ function system_update_1059() {
     $config->set('content', $content);
     $config->save();
   }
+}
+
+/**
+ * Remove the homepage breadcrumb block.
+ */
+function system_update_1060() {
+  $config = config('layout.layout.home');
+  // Only apply this update if the config file already exists.
+  if (!$config->isNew()) {
+    $positions = $config->get('positions');
+    $content = $config->get('content');
+    foreach ($content as $uuid => $block_config) {
+      // If the breadcrumb block is found and in the top region, remove it.
+      if ($block_config['plugin'] === 'system:breadcrumb') {
+        if (in_array($uuid, $positions['top'])) {
+          unset($content[$uuid]);
+          $positions['top'] = array_diff($positions['top'], array($uuid));
+          $config->set('positions', $positions);
+          $config->set('content', $content);
+          $config->save();
+        }
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * Update contrib entity display mode module to core version.
+ */
+function system_update_1061() {
+  $old_config = config('entity_view_mode.settings');
+  $new_config = config('entity.view_modes');
+
+  // Backdrop pre-1.6 display modes from entity_view_mode.module:
+  if (!$old_config->isNew()) {
+    $old_data = $old_config->get('entity_view_modes');
+  }
+  // Drupal 7 entity_view_mode.module:
+  else {
+    $old_data = update_variable_get('entity_view_modes');
+  }
+
+  $new_data = array();
+  if ($old_data) {
+    foreach ($old_data as $entity_type => $old_view_modes) {
+      foreach ($old_view_modes as $view_mode_name => $view_mode) {
+        // Backdrop does not have a "custom settings" flag.
+        if (isset($view_mode['custom settings'])) {
+          unset($view_mode['custom settings']);
+        }
+        $new_data[$entity_type][$view_mode_name] = $view_mode;
+      }
+    }
+  }
+
+  // Only update core if no display modes have yet been set.
+  if ($new_data && !$new_config->get('view_modes')) {
+    $new_config->set('view_modes', $new_data);
+    $new_config->save();
+
+    // Delete the old configuration regardless of location.
+    $old_config->delete();
+    update_variable_del('entity_view_modes');
+  }
+
+  // Remove the entry for the entity_view_mode module in the system table. This
+  // will "disable" the module if present.
+  db_query("DELETE FROM {system} WHERE name = 'entity_view_mode' AND type = 'module'");
+}
+
+/**
+ * Remove configuration settings that were never used.
+ */
+function system_update_1062() {
+  $config = config('system.date');
+  $config->clear('user_timezone_configurable');
+  $config->clear('user_timezone_default');
+  $config->clear('user_timezone_warn');
+  $config->save();
+}
+
+/**
+ * Set a default value for the X-Frame-Options header. This will not allow the
+ * site to be rendered in an iframe on another domain unless specified.
+ */
+function system_update_1063() {
+  $config = config('system.core');
+  $config->set('x_frame_options', 'SAMEORIGIN');
+  $config->save();
+}
+
+/**
+ * Add langcode column to {menu_links} table.
+ */
+function system_update_1064() {
+  if (!db_field_exists('menu_links', 'langcode')) {
+    $spec = array(
+      'description' => 'The language code for this menu link; if \'und\', the link will be shown in all languages.',
+      'type' => 'varchar',
+      'length' => 12,
+      'not null' => TRUE,
+      'default' => '',
+    );
+    db_add_field('menu_links', 'langcode', $spec);
+    db_query("UPDATE {menu_links} SET langcode = 'und'");
+  }
+}
+
+/**
+ * Update the maintenance mode message field to use tokens.
+ */
+function system_update_1065() {
+  $config = config('system.core');
+  $old_message = $config->get('maintenance_mode_message');
+  $new_message = str_replace('@site', '[site:name]', $old_message);
+  $config->set('maintenance_mode_message', $new_message);
+  $config->save();
+}
+
+/**
+ * Update the core profile locations.
+ */
+function system_update_1066() {
+  $profiles = array(
+    'standard',
+    'minimal',
+    'testing',
+  );
+  foreach ($profiles as $profile_name) {
+    db_query("UPDATE {system} SET filename = :filename WHERE name = :name AND type = 'module'", array(
+      ':filename' => 'core/profiles/' . $profile_name . '/' . $profile_name . '.profile',
+      ':name' => $profile_name,
+    ));
+  }
+}
+
+/**
+ * Add default value for form_cache_expiration.
+ */
+function system_update_1067() {
+  $config = config('system.core');
+  $config->set('form_cache_expiration', 21600);
+  $config->save();
 }
 
 /**

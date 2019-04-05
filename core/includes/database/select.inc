@@ -1,5 +1,4 @@
 <?php
-
 /**
  * @addtogroup database
  * @{
@@ -208,8 +207,8 @@ interface SelectQueryInterface extends QueryConditionInterface, QueryAlterableIn
    * majority of cases that is not a problem, as the alias will be the field
    * name. However, if you do need to know the alias you can call getFields()
    * and examine the result to determine what alias was created. Alternatively,
-   * simply use addField() for the few fields you care about and this method for
-   * the rest.
+   * use addField() for the few fields you care about and this method for the
+   * rest.
    *
    * @param $table_alias
    *   The name of the table from which the field comes, as an alias. Generally
@@ -1385,6 +1384,20 @@ class SelectQuery extends Query implements SelectQueryInterface {
 
     // Modules may alter all queries or only those having a particular tag.
     if (!empty($this->alterTags)) {
+      // Many contrib modules (wrongly) assume that query tags used for
+      // access-checking purposes follow the pattern $entity_type . '_access'.
+      // But this is not the case for taxonomy terms, since core used to add
+      // term_access instead of taxonomy_term_access to its queries. Provide
+      // backwards compatibility by adding both tags here instead of attempting
+      // to fix all contrib modules in a coordinated effort.
+      // TODO:
+      // - Extract this mechanism into a hook as part of a public (non-security)
+      //   issue.
+      // - Emit E_USER_DEPRECATED if term_access is used.
+      $term_access_tags = array('term_access' => 1, 'taxonomy_term_access' => 1);
+      if (array_intersect_key($this->alterTags, $term_access_tags)) {
+        $this->alterTags += $term_access_tags;
+      }
       $hooks = array('query');
       foreach ($this->alterTags as $tag => $value) {
         $hooks[] = 'query_' . $tag;
@@ -1414,7 +1427,7 @@ class SelectQuery extends Query implements SelectQueryInterface {
    * @return NULL|DatabaseStatementInterface|DatabaseStatementBase|DatabaseStatementPrefetch|stdClass[]
    */
   public function execute() {
-    // If validation fails, simply return NULL.
+    // If validation fails return NULL.
     // Note that validation routines in preExecute() may throw exceptions instead.
     if (!$this->preExecute()) {
       return NULL;

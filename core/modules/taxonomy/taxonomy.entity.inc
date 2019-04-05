@@ -32,6 +32,13 @@ class TaxonomyTerm extends Entity {
   public $name;
 
   /**
+   * Language of the term.
+   *
+   * @var string
+   */
+  public $langcode = LANGUAGE_NONE;
+
+  /**
    * (optional) Description of the term.
    *
    * @var string
@@ -134,7 +141,7 @@ class TaxonomyTermController extends EntityDatabaseStorageController {
   protected function buildQuery($ids, $conditions = array(), $revision_id = FALSE) {
     $query = parent::buildQuery($ids, $conditions, $revision_id);
     $query->addTag('translatable');
-    $query->addTag('term_access');
+    $query->addTag('taxonomy_term_access');
     // When name is passed as a condition use LIKE.
     if (isset($conditions['name'])) {
       $query_conditions = &$query->conditions();

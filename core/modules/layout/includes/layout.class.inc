@@ -151,6 +151,13 @@ class Layout {
   var $in_progress;
 
   /**
+   * The display renderer class used to handle this layout.
+   *
+   * @var string
+   */
+  var $renderer_name = 'standard';
+
+  /**
    * An array of LayoutContext instances used by this menu item.
    *
    * @var LayoutContext[]
@@ -218,12 +225,20 @@ class Layout {
     if ($this->storage === LAYOUT_STORAGE_DEFAULT) {
       $this->storage = LAYOUT_STORAGE_OVERRIDE;
     }
+    $is_new = !empty($this->is_new);
+
+    // Allow modules to act on layout data before saving.
+    foreach (module_implements('layout_presave') as $module) {
+      $function = $module . '_layout_presave';
+      $function($this);
+    }
 
     $data = array(
       'path' => $this->path,
       'name' => $this->name,
       'title' => $this->title,
       'description' => $this->description,
+      'renderer_name' => $this->renderer_name,
       'module' => $this->module,
       'weight' => $this->weight,
       'storage' => $this->storage,
@@ -256,12 +271,6 @@ class Layout {
       }
     }
 
-    // Allow modules to act on layout data before saving.
-    foreach (module_implements('layout_presave') as $module) {
-      $function = $module . '_layout_presave';
-      $function($this->name, $data);
-    }
-
     if (isset($this->original_name) && $this->original_name != $this->name) {
       config('layout.layout.' . $this->original_name)->delete();
     }
@@ -288,13 +297,6 @@ class Layout {
         // See https://github.com/backdrop/backdrop-issues/issues/2137.
         file_usage_add($file, 'file', 'file', $file->fid);
       }
-    }
-
-    if (!empty($this->is_new)) {
-      $this->invokeHook('insert');
-    }
-    else {
-      $this->invokeHook('update');
     }
 
     // If this layout overrides an existing module path, reassign or delete
@@ -328,6 +330,14 @@ class Layout {
       }
     }
     layout_reset_caches();
+
+    $new_this = layout_load($this->name);
+    if ($is_new) {
+      $new_this->invokeHook('insert');
+    }
+    else {
+      $new_this->invokeHook('update');
+    }
   }
 
   /**

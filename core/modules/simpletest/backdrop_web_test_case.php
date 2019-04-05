@@ -53,6 +53,13 @@ abstract class BackdropTestCase {
   protected $originalConfigDirectories = NULL;
 
   /**
+   * URL to the verbose output file directory.
+   *
+   * @var string
+   */
+  protected $verboseDirectoryUrl;
+
+  /**
    * Time limit for the test.
    */
   protected $timeLimit = 500;
@@ -129,7 +136,13 @@ abstract class BackdropTestCase {
    *   Array of errors containing a list of unmet requirements.
    */
   protected function checkRequirements() {
-    return array();
+    $errors = array();
+
+    if (!extension_loaded('curl')) {
+      $errors[] = 'PHP curl extension is not present.';
+    }
+
+    return $errors;
   }
 
   /**
@@ -532,8 +545,12 @@ abstract class BackdropTestCase {
    */
   protected function verbose($message) {
     if ($id = simpletest_verbose($message)) {
-      $url = file_create_url($this->originalFileDirectory . '/simpletest/verbose/' . get_class($this) . '-' . $id . '.html');
-      $this->error(l(t('Verbose message'), $url, array('attributes' => array('target' => '_blank'))), 'User notice');
+      $class_safe = str_replace('\\', '_', get_class($this));
+      $url = $this->verboseDirectoryUrl . '/' . $class_safe . '-' . $id . '.html';
+      // Not using l() to avoid invoking the theme system, so that unit tests
+      // can use verbose() as well.
+      $link = '<a href="' . $url . '" target="_blank">' . t('Verbose message') . '</a>';
+      $this->error($link, 'User notice');
     }
   }
 
@@ -573,12 +590,8 @@ abstract class BackdropTestCase {
     }
     $missing_requirements = $this->checkRequirements();
     if (!empty($missing_requirements)) {
-      $missing_requirements_object = new ReflectionObject($this);
-      $caller = array(
-        'file' => $missing_requirements_object->getFileName(),
-      );
       foreach ($missing_requirements as $missing_requirement) {
-        BackdropTestCase::insertAssert($this->testId, $class, FALSE, $missing_requirement, 'Requirements check.', $caller);
+        $this->fail($missing_requirement, 'Requirements check.');
       }
     }
     else {
@@ -823,10 +836,22 @@ class BackdropUnitTestCase extends BackdropTestCase {
    * method.
    */
   protected function setUp() {
-    global $conf;
+    global $conf, $language;
 
     // Store necessary current values before switching to the test environment.
     $this->originalFileDirectory = config_get('system.core', 'file_public_path');
+    $this->verboseDirectoryUrl = file_create_url($this->originalFileDirectory . '/simpletest/verbose');
+
+    // Set to English to prevent any use of the database in t() calls.
+    // The following array/object conversion is copied from language_default().
+    $this->originalLanguage = $language;
+    $language = (object) array(
+      'langcode' => 'en',
+      'name' => 'English',
+      'direction' => 0,
+      'enabled' => TRUE,
+      'weight' => 0,
+    );
 
     $this->prepareDatabasePrefix();
 
@@ -868,7 +893,7 @@ class BackdropUnitTestCase extends BackdropTestCase {
   }
 
   protected function tearDown() {
-    global $conf;
+    global $conf, $language;
 
     // Get back to the original connection.
     Database::removeConnection('default');
@@ -885,6 +910,9 @@ class BackdropUnitTestCase extends BackdropTestCase {
     if (isset($this->originalModuleList)) {
       module_list(TRUE, FALSE, FALSE, $this->originalModuleList);
     }
+
+    // Reset language.
+    $language = $this->originalLanguage;
   }
 }
 
@@ -1003,20 +1031,6 @@ class BackdropWebTestCase extends BackdropTestCase {
    * @var bool
    */
   protected $originalCleanUrl;
-
-  /**
-   * The original site language object, before changing for testing purposes.
-   *
-   * @var stdClass
-   */
-  protected $originalLanguage;
-
-  /**
-   * The original default language code, before changing for testing purposes.
-   *
-   * @var string
-   */
-  protected $originalLanguageDefault;
 
   /**
    * The original shutdown handlers array, before it was cleaned for testing purposes.
@@ -1414,7 +1428,7 @@ class BackdropWebTestCase extends BackdropTestCase {
       'name' => $by_email ? $account->mail : $account->name,
       'pass' => $account->pass_raw
     );
-    $this->backdropPost('user', $edit, t('Log in'));
+    $this->backdropPost('user/login', $edit, t('Log in'));
 
     // Check for the logged-in class.
     $result = $this->xpath('/html/body[contains(@class, "logged-in")]');
@@ -1429,8 +1443,7 @@ class BackdropWebTestCase extends BackdropTestCase {
    * Generate a token for the currently logged in user.
    */
   protected function backdropGetToken($value = '') {
-    $private_key = backdrop_get_private_key();
-    return backdrop_hmac_base64($value, $this->session_id . $private_key);
+    return backdrop_hmac_base64($value, $this->session_id . backdrop_get_private_key() . backdrop_get_hash_salt());
   }
 
   /*
@@ -1495,13 +1508,14 @@ class BackdropWebTestCase extends BackdropTestCase {
    * @see BackdropWebTestCase::tearDown()
    */
   protected function prepareEnvironment() {
-    global $user, $language, $settings, $config_directories;
+    global $user, $language, $language_url, $settings, $config_directories;
 
     // Store necessary current values before switching to prefixed database.
     $this->originalLanguage = $language;
-    $this->originalLanguageDefault = config_get('system.core', 'language_default');
+    $this->originalLanguageUrl = $language_url;
     $this->originalConfigDirectories = $config_directories;
     $this->originalFileDirectory = config_get('system.core', 'file_public_path');
+    $this->verboseDirectoryUrl = file_create_url($this->originalFileDirectory . '/simpletest/verbose');
     $this->originalProfile = backdrop_get_profile();
     $this->originalCleanUrl = config_get('system.core', 'clean_url');
     $this->originalUser = $user;
@@ -1510,10 +1524,9 @@ class BackdropWebTestCase extends BackdropTestCase {
     // Set to English to prevent exceptions from utf8_truncate() from t()
     // during install if the current language is not 'en'.
     // The following array/object conversion is copied from language_default().
-    $language = (object) array(
+    $language_url = $language = (object) array(
       'langcode' => 'en',
       'name' => 'English',
-      'direction' => 0,
       'enabled' => 1,
       'weight' => 0,
     );
@@ -1569,7 +1582,7 @@ class BackdropWebTestCase extends BackdropTestCase {
    * Copies the cached tables and config for a profile if one is available.
    *
    * @return
-   *   TRUE when cache used, FALSE when cache is not available.   
+   *   TRUE when cache used, FALSE when cache is not available.
    *
    * @see BackdropWebTestCase::setUp()
    * @see BackdropWebTestCase::tearDown()
@@ -1579,27 +1592,27 @@ class BackdropWebTestCase extends BackdropTestCase {
 
     if (is_dir($config_cache_dir)) {
       $prefix = 'simpletest_cache_' . $this->profile . '_';
-      
+
       $tables = db_query("SHOW TABLES LIKE :prefix", array(':prefix' => db_like($prefix) . '%' ))->fetchCol();
-      
+
       foreach ($tables as $table_prefix) {
         $table = substr($table_prefix, strlen($prefix));
         db_query('CREATE TABLE ' . $this->databasePrefix . $table . ' LIKE ' . $table_prefix);
         db_query('INSERT ' . $this->databasePrefix . $table . ' SELECT * FROM ' . $table_prefix);
       }
-      
+
       $this->recursiveCopy($config_cache_dir, $this->public_files_directory);
 
       return TRUE;
     }
-    return FALSE; 
+    return FALSE;
   }
 
   /**
    * Recursively copy one directory to another.
    *
    */
-  private function recursiveCopy($src, $dst) { 
+  private function recursiveCopy($src, $dst) {
     $dir = opendir($src);
     if(!file_exists($dst)){
       mkdir($dst);
@@ -1608,7 +1621,7 @@ class BackdropWebTestCase extends BackdropTestCase {
       if (( $file != '.' ) && ( $file != '..' )) {
         if ( is_dir($src . '/' . $file) ) {
           $this->recursiveCopy($src . '/' . $file, $dst . '/' . $file);
-        } 
+        }
         else {
           copy($src . '/' . $file, $dst . '/' . $file);
         }
@@ -1642,7 +1655,7 @@ class BackdropWebTestCase extends BackdropTestCase {
    *   TRUE if set up completes, FALSE if an error occurred.
    */
   protected function setUp() {
-    global $user, $language, $conf;
+    global $user, $language, $language_url, $conf;
     // Create the database prefix for this test.
     $this->prepareDatabasePrefix();
 
@@ -1743,7 +1756,7 @@ class BackdropWebTestCase extends BackdropTestCase {
 
     // Set up English language.
     unset($conf['language_default']);
-    $language = language_default();
+    $language_url = $language = language_default();
 
     // Use the test mail class instead of the default mail handler class.
     config_set('system.mail', 'default-system', 'TestingMailSystem');
@@ -1804,7 +1817,7 @@ class BackdropWebTestCase extends BackdropTestCase {
    * created by setUp(), and reset the database prefix.
    */
   protected function tearDown() {
-    global $user, $language, $settings, $config_directories;
+    global $user, $language, $language_url, $settings, $config_directories;
 
     // In case a fatal error occurred that was not in the test process read the
     // log to pick up any fatal errors.
@@ -1877,9 +1890,7 @@ class BackdropWebTestCase extends BackdropTestCase {
 
     // Reset language.
     $language = $this->originalLanguage;
-    if ($this->originalLanguageDefault) {
-      $GLOBALS['conf']['language_default'] = $this->originalLanguageDefault;
-    }
+    $language_url = $this->originalLanguageUrl;
 
     // Close the CURL handler.
     $this->curlClose();
@@ -2085,14 +2096,12 @@ class BackdropWebTestCase extends BackdropTestCase {
    */
   protected function parse() {
     if (!$this->elements) {
-      // DOM can load HTML soup. But, HTML soup can throw warnings, suppress
-      // them.
       $htmlDom = new DOMDocument();
+      // DOM can load HTML soup, which can throw warnings. Suppress them here.
       @$htmlDom->loadHTML('<?xml encoding="UTF-8">' . $this->backdropGetContent());
       if ($htmlDom) {
         $this->pass(t('Valid HTML found on "@path"', array('@path' => $this->getUrl())), t('Browser'));
-        // It's much easier to work with simplexml than DOM, luckily enough
-        // we can just simply import our DOM tree.
+        // Import our DOM tree.
         $this->elements = simplexml_import_dom($htmlDom);
       }
     }
@@ -3165,7 +3174,7 @@ class BackdropWebTestCase extends BackdropTestCase {
     if (!$message) {
       $message = t('Raw "@raw" found', array('@raw' => $raw));
     }
-    return $this->assert(strpos($this->backdropGetContent(), $raw) !== FALSE, $message, $group);
+    return $this->assert(strpos($this->backdropGetContent(), (string) $raw) !== FALSE, $message, $group);
   }
 
   /**
@@ -3185,7 +3194,7 @@ class BackdropWebTestCase extends BackdropTestCase {
     if (!$message) {
       $message = t('Raw "@raw" not found', array('@raw' => $raw));
     }
-    return $this->assert(strpos($this->backdropGetContent(), $raw) === FALSE, $message, $group);
+    return $this->assert(strpos($this->backdropGetContent(), (string) $raw) === FALSE, $message, $group);
   }
 
   /**
@@ -3676,7 +3685,7 @@ class BackdropWebTestCase extends BackdropTestCase {
    *   TRUE on pass, FALSE on fail.
    */
   protected function assertOption($id, $option, $message = '') {
-    $options = $this->xpath('//select[@id=:id]/option[@value=:option]', array(':id' => $id, ':option' => $option));
+    $options = $this->xpath('//select[@id=:id]//option[@value=:option]', array(':id' => $id, ':option' => $option));
     return $this->assertTrue(isset($options[0]), $message ? $message : t('Option @option for field @id exists.', array('@option' => $option, '@id' => $id)), t('Browser'));
   }
 

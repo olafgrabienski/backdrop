@@ -1,5 +1,4 @@
 <?php
-
 /**
  * @file
  * Field module functionality for the File module.
@@ -84,6 +83,7 @@ function file_field_instance_settings_form($field, $instance) {
     '#type' => 'textfield',
     '#title' => t('File directory'),
     '#default_value' => $settings['file_directory'],
+    '#field_prefix' => $field['settings']['uri_scheme'] == 'public' ? config_get('system.core', 'file_public_path') . '/' : '',
     '#description' => t('Optional subdirectory within the upload destination where files will be stored. Do not include preceding or trailing slashes.'),
     '#element_validate' => array('_file_generic_settings_file_directory_validate'),
     '#weight' => 3,
@@ -234,7 +234,9 @@ function file_field_insert($entity_type, $entity, $field, $instance, $langcode, 
 
   // Add a new usage of each uploaded file.
   foreach ($items as $item) {
-    file_usage_add(file_load($item['fid']), 'file', $entity_type, $id);
+    if ($file = file_load($item['fid'])) {
+      file_usage_add($file, 'file', $entity_type, $id);
+    }
   }
 }
 
@@ -250,7 +252,9 @@ function file_field_update($entity_type, $entity, $field, $instance, $langcode, 
   // deletion of previous file usages are necessary.
   if (!empty($entity->revision)) {
     foreach ($items as $item) {
-      file_usage_add(file_load($item['fid']), 'file', $entity_type, $id);
+      if ($file = file_load($item['fid'])) {
+        file_usage_add($file, 'file', $entity_type, $id);
+      }
     }
     return;
   }
@@ -269,7 +273,9 @@ function file_field_update($entity_type, $entity, $field, $instance, $langcode, 
       $original_fids[] = $original_item['fid'];
       if (isset($original_item['fid']) && !in_array($original_item['fid'], $current_fids)) {
         // Decrement the file usage count by 1.
-        file_usage_delete(file_load($original_item['fid']), 'file', $entity_type, $id);
+        if ($file = file_load($original_item['fid'])) {
+          file_usage_delete($file, 'file', $entity_type, $id);
+        }
       }
     }
   }
@@ -277,7 +283,9 @@ function file_field_update($entity_type, $entity, $field, $instance, $langcode, 
   // Add new usage entries for newly added files.
   foreach ($items as $item) {
     if (!in_array($item['fid'], $original_fids)) {
-      file_usage_add(file_load($item['fid']), 'file', $entity_type, $id);
+      if ($file = file_load($item['fid'])) {
+        file_usage_add($file, 'file', $entity_type, $id);
+      }
     }
   }
 }
@@ -290,7 +298,9 @@ function file_field_delete($entity_type, $entity, $field, $instance, $langcode, 
 
   // Delete all file usages within this entity.
   foreach ($items as $delta => $item) {
-    file_usage_delete(file_load($item['fid']), 'file', $entity_type, $id, 0);
+    if ($file = file_load($item['fid'])) {
+      file_usage_delete($file, 'file', $entity_type, $id, 0);
+    }
   }
 }
 
@@ -301,7 +311,9 @@ function file_field_delete_revision($entity_type, $entity, $field, $instance, $l
   list($id, $vid, $bundle) = entity_extract_ids($entity_type, $entity);
   foreach ($items as $delta => $item) {
     // Decrement the file usage count by 1.
-    file_usage_delete(file_load($item['fid']), 'file', $entity_type, $id);
+    if ($file = file_load($item['fid'])) {
+      file_usage_delete($file, 'file', $entity_type, $id);
+    }
   }
 }
 
@@ -386,7 +398,6 @@ function file_field_widget_settings_form($field, $instance) {
     '#default_value' => $settings['progress_indicator'],
     '#description' => t('The throbber display does not show the status of uploads but takes up less space. The progress bar is helpful for monitoring progress on large uploads.'),
     '#weight' => 16,
-    '#access' => file_progress_implementation(),
   );
 
   return $form;
@@ -462,8 +473,8 @@ function file_field_widget_form(&$form, &$form_state, $field, $instance, $langco
     $elements['#display_field'] = $field['settings']['display_field'];
 
     // Add some properties that will eventually be added to the file upload
-    // field. These are added here so that they may be referenced easily through
-    // a hook_form_alter().
+    // field. These are added here so that they may be referenced through a
+    // hook_form_alter().
     $elements['#file_upload_title'] = t('Add a new file');
     $elements['#file_upload_description'] = theme('file_upload_help', array('description' => '', 'upload_validators' => $elements[0]['#upload_validators']));
   }
@@ -536,7 +547,7 @@ function file_field_widget_value($element, $input = FALSE, $form_state) {
     // If the display field is present make sure its unchecked value is saved.
     $field = field_widget_field($element, $form_state);
     if (empty($input['display'])) {
-      $input['display'] = $field['settings']['display_field'] ? 0 : 1;
+      $input['display'] = !empty($field['settings']['display_field']) ? 0 : 1;
     }
   }
 
@@ -602,6 +613,10 @@ function file_field_widget_process($element, &$form_state, $form) {
   if ($field['cardinality'] != 1) {
     $parents = array_slice($element['#array_parents'], 0, -1);
     $new_path = 'file/ajax/' . implode('/', $parents) . '/' . $form['form_build_id']['#value'];
+    // Token here is not generated with backdrop_token() as it does not need to
+    // be session-based.
+    $token = backdrop_hmac_base64($new_path, backdrop_get_private_key() . backdrop_get_hash_salt());
+    $new_path .= '/' . $token;
     $field_element = backdrop_array_get_nested_value($form, $parents);
     $new_wrapper = $field_element['#id'] . '-ajax-wrapper';
     foreach (element_children($element) as $key) {

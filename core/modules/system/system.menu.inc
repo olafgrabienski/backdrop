@@ -19,12 +19,15 @@ function system_menu_block_defaults($menu_name) {
     'level' => 1,
     'menu_name' => $menu_name,
     'style' => NULL,
+    'expand_all' => FALSE,
   );
   if ($menu_name == 'main-menu') {
     $defaults['depth'] = 1;
+    $defaults['toggle'] = TRUE;
   }
   else {
     $defaults['depth'] = 0;
+    $defaults['toggle'] = FALSE;
   }
   return $defaults;
 }
@@ -53,7 +56,6 @@ function system_menu_block_form($config) {
       'tree' => t('Hierarchical tree'),
     ),
     '#default_value' => empty($config['style']) ? 'tree' : $config['style'],
-    '#description' => t('The menu style may adjust how a menu is displayed, such as a tree of links or a dropdown.'),
   );
 
   $form['level'] = array(
@@ -101,6 +103,23 @@ function system_menu_block_form($config) {
       ),
     ),
   );
+  $form['expand_all'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Show all menu links'),
+    '#default_value' => $config['expand_all'],
+    '#description' => t('When unchecked, only expanded or active trail menu links will be displayed.'),
+    '#states' => array(
+      'visible' => array(
+        'select[name="block_settings[style]"]' => array('value' => 'tree'),
+      ),
+    ),
+  );
+  $form['toggle'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Display menu toggle button on small screens'),
+    '#default_value' => $config['toggle'],
+    '#description' => t('On devices with small screens, this option reduces the menu to a toggle button, commonly known as <a href="https://en.wikipedia.org/wiki/Hamburger_button" target="_blank"><em>hamburger button</em></a>. Clicking the icon reveals or hides the menu, saving screen space.'),
+  );
 
   return $form;
 }
@@ -134,15 +153,19 @@ function system_menu_block_build(array $config) {
   }
 
   // Set defaults.
-  $config += array(
-    'style' => 'tree',
-    'level' => 1,
-    'depth' => 3,
-  );
+  $menu_name = str_replace('_', '-', $config['menu_name']);
+  $config += system_menu_block_defaults($menu_name);
+  if (empty($config['style'])) {
+    $config['style'] = 'tree';
+  }
+
+  // Always expand dropdown style output.
+  if ($config['style'] === 'dropdown') {
+    $config['expand_all'] = TRUE;
+  }
 
   // Get the default block name.
   backdrop_static_reset('menu_block_set_title');
-  $menu_name = str_replace('_', '-', $config['menu_name']);
   system_menu_block_set_title($menu_names[$menu_name]);
 
   // Get the raw menu tree data.
@@ -163,6 +186,12 @@ function system_menu_block_build(array $config) {
       if ($config['style'] === 'dropdown') {
         $data['content']['#attached']['library'][] = array('system', 'smartmenus');
       }
+    }
+    if (!empty($config['toggle']) && $config['toggle'] == TRUE) {
+      $id = backdrop_html_id('menu-toggle-state');
+      $data['content']['#wrapper_attributes']['data-menu-toggle-id'] = $id;
+      $data['content']['#prefix'] = theme('menu_toggle', array('enabled' => $config['toggle'], 'id' => $id, 'text' => t('Menu')));
+      $data['content']['#attached']['css'][] = backdrop_get_path('module', 'system') . '/css/menu-toggle.theme.css';
     }
     if (!empty($config['style_settings'])) {
       $data['content']['#wrapper_attributes']['data-menu-style'] = backdrop_json_encode($config['style_settings']);
