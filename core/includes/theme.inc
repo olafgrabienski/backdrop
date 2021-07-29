@@ -632,9 +632,9 @@ function _theme_process_registry(&$cache, $name, $type, $theme, $path) {
       // Check for the override flag and prevent the cached variable
       // preprocessors from being used. This allows themes or theme engines to
       // remove variable preprocessors set earlier in the registry build.
-      if (!empty($info['override ' . 'preprocess functions'])) {
+      if (!empty($info['override preprocess functions'])) {
         // Flag not needed inside the registry.
-        unset($result[$hook]['override ' . 'preprocess functions']);
+        unset($result[$hook]['override preprocess functions']);
       }
       elseif (isset($cache[$hook]['preprocess functions']) && is_array($cache[$hook]['preprocess functions'])) {
         $info['preprocess functions'] = array_merge($cache[$hook]['preprocess functions'], $info['preprocess functions']);
@@ -1476,8 +1476,8 @@ function theme_get_setting($setting_name, $theme = NULL) {
  * Detect if a theme has any theme settings.
  *
  * This utility function checks a theme's .info file for any settings. If the
- * theme has a base theme, it loops through the parent themes .info files as
- * well.
+ * theme has a base theme, it loops through the .info files of the parent themes
+ * as well.
  *
  * @param string $theme
  *   The theme name to be checked for settings.
@@ -1493,6 +1493,33 @@ function theme_has_settings($theme) {
   }
   if (isset($theme_info->info['base theme'])) {
     return theme_has_settings($theme_info->info['base theme']);
+  }
+  return FALSE;
+}
+
+/**
+ * Detect if a theme has support for the Color module.
+ *
+ * This utility function checks a theme's .info file for whether support for the
+ * Color module has been enabled. If the theme has a base theme, it loops
+ * through the .info files of the parent themes as well.
+ *
+ * @param string $theme
+ *   The theme name to be checked for Color module support.
+ *
+ * @return bool
+ *   TRUE if the theme supports Color module, FALSE otherwise.
+ *
+ * @since 1.16.0
+ */
+function theme_has_color_support($theme) {
+  $themes = list_themes();
+  $theme_info = $themes[$theme];
+  if (!empty($theme_info->info['settings']['color']) && file_exists(backdrop_get_path('theme', $theme_info->name) . '/color/color.inc')) {
+    return TRUE;
+  }
+  if (isset($theme_info->info['base theme'])) {
+    return theme_has_color_support($theme_info->info['base theme']);
   }
   return FALSE;
 }
@@ -2008,7 +2035,7 @@ function theme_breadcrumb($variables) {
 /**
  * Returns HTML for a table.
  *
- * @param $variables
+ * @param array $variables
  *   An associative array containing:
  *   - header: An array containing the table headers. Each element of the array
  *     can be either a localized string or an associative array with the
@@ -2029,6 +2056,11 @@ function theme_breadcrumb($variables) {
  *       only applies to one column at a time.
  *     - Any HTML attributes, such as "colspan", to apply to the column header
  *       cell.
+ *   - footer: An array of table rows which will be printed within a <tfoot>
+ *     tag, in the same format as the rows element (see above).
+ *     The structure is the same the one defined for the "rows" key except
+ *     that the no_striping boolean has no effect, there is no rows striping
+ *     for the table footer.
  *   - rows: An array of table rows. Every row is an array of cells, or an
  *     associative array with the following keys:
  *     - "data": an array of cells
@@ -2089,8 +2121,13 @@ function theme_breadcrumb($variables) {
  *   - sticky: Use a "sticky" table header.
  *   - empty: The message to display in an extra row if table does not have any
  *     rows.
+ *
+ * @return string
+ *   The HTML output.
+ *
+ * @since 1.18.4 "footer" key added to $variables parameter.
  */
-function theme_table($variables) {
+function theme_table(array $variables) {
   $header = (array) $variables['header'];
   $rows = (array) $variables['rows'];
   $attributes = $variables['attributes'];
@@ -2157,7 +2194,7 @@ function theme_table($variables) {
   }
 
   $responsive_columns = array();
-  // Format the table header:
+  // Format the table header.
   if (!empty($header)) {
     $ts = tablesort_init($header);
     // HTML requires that the thead tag has tr tags in it followed by tbody
@@ -2181,23 +2218,39 @@ function theme_table($variables) {
       $cell = tablesort_header($cell, $header, $ts);
       $output .= _theme_table_cell($cell, TRUE);
     }
-    // Close the tags based on whether or not there are rows.
+    // Using ternary operator to close the tags, based on whether or not there
+    // are rows.
     $output .= (!empty($rows) ? " </tr></thead>\n" : "</tr>\n");
   }
   else {
     $ts = array();
   }
 
-  // Format the table rows:
+  // Format the table and footer rows.
+  $sections = array();
+
   if (!empty($rows)) {
-    $output .= "<tbody>\n";
+    $sections['tbody'] = $rows;
+  }
+
+  if (!empty($variables['footer'])) {
+    $sections['tfoot'] = $variables['footer'];
+  }
+
+  // tbody and tfoot have the same structure, and are built using the same
+  // procedure.
+  foreach ($sections as $tag => $content) {
+    $output .= "<$tag>\n";
     $flip = array('even' => 'odd', 'odd' => 'even');
     $class = 'even';
-    foreach ($rows as $number => $row) {
+    $default_no_striping = ($tag === 'tfoot');
+
+    foreach ($content as $number => $row) {
       // Check if we're dealing with a simple or complex row.
+
       if (isset($row['data'])) {
         $cells = $row['data'];
-        $no_striping = isset($row['no_striping']) ? $row['no_striping'] : FALSE;
+        $no_striping = isset($row['no_striping']) ? $row['no_striping'] : $default_no_striping;
 
         // Set the attributes array and exclude 'data' and 'no_striping'.
         $tr_attributes = $row;
@@ -2207,8 +2260,9 @@ function theme_table($variables) {
       else {
         $cells = $row;
         $tr_attributes = array();
-        $no_striping = FALSE;
+        $no_striping = $default_no_striping;
       }
+
       if (!empty($cells)) {
         // Add odd/even class.
         if (!$no_striping) {
@@ -2238,7 +2292,8 @@ function theme_table($variables) {
         $output .= " </tr>\n";
       }
     }
-    $output .= "</tbody>\n";
+
+    $output .= "</$tag>\n";
   }
 
   // Add sticky headers if enabled.
@@ -2666,7 +2721,7 @@ function template_preprocess_page(&$variables) {
   // This allows for easy CSS overrides based on context (home page, node of
   // certain type, etc.).
 
-  // Add a class that tells us whether we're on the front page or not.
+  // Add a class that tells us whether we're on the home page or not.
   if ($variables['is_front']) {
     $variables['classes'][] = 'front';
   }
